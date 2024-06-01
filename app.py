@@ -1,15 +1,25 @@
-import os
-
-from cs50 import SQL
 from flask import Flask, flash, jsonify, redirect, render_template, request, session
-
-
-
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///birthdays.db"
 
-db = SQL("sqlite:///birthdays.db")
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(app, model_class=Base)
+
+class Birthday(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str]
+    month: Mapped[int]
+    day: Mapped[int]
+
+with app.app_context():
+    db.create_all()
+
 
 @app.after_request
 def after_request(response):
@@ -30,28 +40,29 @@ def index():
 
         # Inserisci l'elemento nel database
         if 1 <= month <= 12 and 1 <= day <= 31:
-            db.execute("INSERT INTO birthdays (name, month, day) VALUES (?, ?, ?)", name, month, day)
+            birthday = Birthday(name=name, month=month, day=day)
+            db.session.add(birthday)
+            db.session.commit()
 
         return redirect("/")
 
     else:
         # Query dal db
-        birthdays = db.execute("SELECT * FROM birthdays")
-        
+        select = db.select(Birthday).order_by(Birthday.id.asc())
+        birthdays_sqlalchemy = db.session.execute(select).scalars()
 
-        # Formatta le date
-        for b in birthdays:
-            b["date"] = f"{b["month"]}/{b["day"]}"
-
-        print(birthdays)
-        return render_template("birthdays.html", birthdays=birthdays)
+        return render_template("birthdays.html", birthdays=birthdays_sqlalchemy)
 
 
 @app.route("/delete", methods=["POST"])
 def delete():
     id = request.form.get("id")
 
-    db.execute("DELETE FROM birthdays WHERE id = ?", id);
+    birthday = Birthday.query.filter_by(id=id).first()
+    db.session.delete(birthday)
+    db.session.commit()
+
+    
 
     return redirect("/")
 
@@ -68,6 +79,16 @@ def modify():
         day = int(request.form.get("day"))
 
         # Query per modificare
-        db.execute("UPDATE birthdays SET month = ?, day = ? WHERE id = ?", month, day, id)
+        birthday = Birthday.query.filter_by(id=id).first()
+        birthday.month = month
+        birthday.day = day
+        db.session.commit()        
 
         return redirect("/")
+    
+
+@app.context_processor
+def utility_processor():
+    def format_date(month, day):
+        return f"{month}/{day}"
+    return dict(format_date=format_date)
